@@ -3,6 +3,7 @@
 VERSION='20'
 cpucount=`cat /proc/cpuinfo | grep processor | wc -l`
 FLROOT=/sys/devices/system/cpu
+FWROOT=/sys/firmware
 DRIVER=auto
 VERBOSE=0
 
@@ -239,6 +240,58 @@ function set_energy_performance_preference () {
   fi
 }
 
+
+function get_energy_performance_bias () {
+  if [ -z $CORE ]; then
+    i=0
+    ag=''
+    while [ $i -ne $cpucount ]; do
+      if [ $i = 0 ]; then
+        ag=`cat $FLROOT/cpu0/power/energy_perf_bias`
+      else
+        ag=$ag' '`cat $FLROOT/cpu$i/power/energy_perf_bias`
+      fi
+      i=`expr $i + 1`
+    done
+    echo $ag
+  else cat $FLROOT/cpu$CORE/power/energy_perf_bias
+  fi
+}
+
+function set_energy_performance_bias () {
+  if [ `driver` != 'intel_pstate' ]; then
+    verbose "EPB is not supported by a driver other than intel_pstate"
+    return
+  fi
+  local EPB_VALUE=6 # default value
+  if [[ "$VALUE" =~ ^[0-9]+$ && $VALUE -ge 0 && $VALUE -le 15 ]]; then
+    EPB_VALUE=$VALUE
+  else
+    case $VALUE in
+      performance) EPB_VALUE=0;;
+      balance_performance) EPB_VALUE=4;;
+      default) EPB_VALUE=6;;
+      balance_power) EPB_VALUE=8;;
+      power) EPB_VALUE=15;;
+      *)
+        verbose "Invalid value provided for EPB"
+        verbose "Acceptable values: performance|balance-power|default|balance-power|power or a number in the range [0-15]"
+        return
+      ;;
+    esac
+  fi
+
+  if [ -z $CORE ]; then
+    i=0
+    while [ $i -ne $cpucount ]; do
+      FLNM="$FLROOT/cpu"$i"/power/energy_perf_bias"
+      if [ -w $FLNM ]; then echo $EPB_VALUE > $FLNM; fi
+      i=`expr $i + 1`
+    done
+  else echo $EPB_VALUE > $FLROOT/cpu$CORE/power/energy_perf_bias
+  fi
+}
+
 case $OPTION in
   -h|--help) help;;
   --version) echo $VERSION;;
@@ -261,6 +314,26 @@ case $OPTION in
     else
       verbose "Setting CPU"$CORE" EPPs to "$VALUE
       set_energy_performance_preference
+    fi
+  ;;
+  --epb)
+    if [ ! -z $AVAILABLE ]; then cat $FLROOT/cpu0/power/energy_perf_bias
+    elif [ -z $VALUE ]; then 
+      verbose "Getting CPU"$CORE" EPBs"
+      get_energy_performance_bias
+    else
+      verbose "Setting CPU"$CORE" EPBs to "$VALUE
+      set_energy_performance_bias
+    fi
+  ;;
+  -p|--pp)
+    if [ ! -z $AVAILABLE ]; then cat $FWROOT/acpi/platform_profile_choices
+    elif [ -z $VALUE ]; then
+      verbose "Getting Platform Profile"
+      cat $FWROOT/acpi/platform_profile
+    else
+      verbose "Getting Platform Profile to "$VALUE
+      echo $VALUE > $FWROOT/acpi/platform_profile
     fi
   ;;
   -f|--frequency)

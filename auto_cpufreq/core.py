@@ -15,14 +15,17 @@ from warnings import filterwarnings
 
 from auto_cpufreq.config.config import config
 from auto_cpufreq.globals import (
-    ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR
+    ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR, SNAP_DAEMON_CHECK
 )
 from auto_cpufreq.power_helper import *
 
 filterwarnings("ignore")
 
 # add path to auto-cpufreq executables for GUI
-os.environ["PATH"] += ":/usr/local/bin"
+if "PATH" in os.environ:
+    os.environ["PATH"] += os.pathsep + "/usr/local/bin"
+else:
+    os.environ["PATH"] = "/usr/local/bin"
 
 # ToDo:
 # - replace get system/CPU load from: psutil.getloadavg() | available in 5.6.2)
@@ -30,8 +33,7 @@ os.environ["PATH"] += ":/usr/local/bin"
 SCRIPTS_DIR = Path("/usr/local/share/auto-cpufreq/scripts/")
 CPUS = os.cpu_count()
 
-# ignore these devices under /sys/class/power_supply/
-POWER_SUPPLY_IGNORELIST = ["hidpp_battery"]
+
 
 # Note:
 # "load1m" & "cpuload" can't be global vars and to in order to show correct data must be
@@ -52,9 +54,6 @@ if IS_INSTALLED_WITH_SNAP:
 else:
     auto_cpufreq_stats_path = Path("/var/run/auto-cpufreq.stats")
     governor_override_state = Path("/opt/auto-cpufreq/override.pickle")
-
-# daemon check
-dcheck = getoutput("snapctl get daemon")
 
 def file_stats():
     global auto_cpufreq_stats_file
@@ -217,12 +216,30 @@ def set_turbo(value:bool):
     print("Setting turbo boost:", "on" if value else "off")
     turbo(value)
 
+
+# ignore these devices under /sys/class/power_supply/
+def get_power_supply_ignore_list():
+
+    conf = config.get_config()
+
+    list = []
+
+    if conf.has_section("power_supply_ignore_list"):
+        for i in conf["power_supply_ignore_list"]:
+            list.append(conf["power_supply_ignore_list"][i])
+
+    # these are hard coded power supplies that will always be ignored
+    list.append("hidpp_battery")
+    return list
+
+
 def charging():
     """
     get charge state: is battery charging or discharging
     """
     # sort it so AC is 'always' first
     power_supplies = sorted(os.listdir(Path(POWER_SUPPLY_DIR)))
+    POWER_SUPPLY_IGNORELIST = get_power_supply_ignore_list()
 
     # check if we found power supplies. on a desktop these are not found and we assume we are on a powercable.
     if len(power_supplies) == 0: return True # nothing found, so nothing to check
@@ -265,6 +282,7 @@ def cpufreqctl():
     """
     if not (IS_INSTALLED_WITH_SNAP or os.path.isfile("/usr/local/bin/cpufreqctl.auto-cpufreq")):
         copy(SCRIPTS_DIR / "cpufreqctl.sh", "/usr/local/bin/cpufreqctl.auto-cpufreq")
+        call(["chmod", "a+x", "/usr/local/bin/cpufreqctl.auto-cpufreq"])
 
 def cpufreqctl_restore():
     """
@@ -278,6 +296,8 @@ def footer(l=79): print("\n" + "-" * l + "\n")
 def deploy_complete_msg():
     print("\n" + "-" * 17 + " auto-cpufreq daemon installed and running " + "-" * 17 + "\n")
     print("To view live stats, run:\nauto-cpufreq --stats")
+    print("\nauto-cpufreq makes all decisions automatically, if you would like to")
+    print("configure certain setting to your own liking, please refer to:\nhttps://github.com/AdnanHodzic/auto-cpufreq#configuring-auto-cpufreq")
     print("\nTo disable and remove auto-cpufreq daemon, run:\nsudo auto-cpufreq --remove")
     footer()
 
@@ -297,13 +317,17 @@ def deploy_daemon():
 
     print("\n* Deploy auto-cpufreq install script")
     copy(SCRIPTS_DIR / "auto-cpufreq-install.sh", "/usr/local/bin/auto-cpufreq-install")
+    call(["chmod", "a+x", "/usr/local/bin/auto-cpufreq-install"])
 
     print("\n* Deploy auto-cpufreq remove script")
     copy(SCRIPTS_DIR / "auto-cpufreq-remove.sh", "/usr/local/bin/auto-cpufreq-remove")
+    call(["chmod", "a+x", "/usr/local/bin/auto-cpufreq-remove"])
 
     # output warning if gnome power profile is running
     gnome_power_detect_install()
     gnome_power_svc_disable()
+
+    tuned_svc_disable()
 
     tlp_service_detect() # output warning if TLP service is detected
 
@@ -352,6 +376,8 @@ def remove_daemon():
     # output warning if gnome power profile is stopped
     gnome_power_rm_reminder()
     gnome_power_svc_enable()
+
+    tuned_svc_enable()
 
     # run auto-cpufreq daemon remove script
     call("/usr/local/bin/auto-cpufreq-remove", shell=True)
@@ -409,7 +435,9 @@ def get_load():
 
     print("\nTotal CPU usage:", cpuload, "%")
     print("Total system load: {:.2f}".format(load1m))
-    print("Average temp. of all cores: {:.2f} °C \n".format(avg_all_core_temp))
+    from auto_cpufreq.modules.system_info import SystemInfo
+
+    print("Average temp. of all cores: {:.2f} °C \n".format(SystemInfo.avg_temp()))
 
     return cpuload, load1m
 
@@ -476,6 +504,27 @@ def set_frequencies():
         # set the frequency
         run(f"cpufreqctl.auto-cpufreq {frequency[freq_type]['cmdargs']} --set={frequency[freq_type]['value']}", shell=True)
 
+def set_platform_profile(conf, profile):
+    if conf.has_option(profile, "platform_profile"):
+        if not Path("/sys/firmware/acpi/platform_profile").exists():
+            print('Not setting Platform Profile (not supported by system)')
+        else:
+            pp = conf[profile]["platform_profile"]
+            print(f'Setting to use: "{pp}" Platform Profile')
+            run(f"cpufreqctl.auto-cpufreq --pp --set={pp}", shell=True)
+
+def set_energy_perf_bias(conf, profile):
+    if Path("/sys/devices/system/cpu/intel_pstate").exists() is False:
+        print('Not setting EPB (not supported by system)')
+        return
+    epb = "balance_performance" if profile == "charger" else "balance_power"
+    if conf.has_option(profile, "energy_perf_bias"):
+        epb = conf[profile]["energy_perf_bias"]
+
+    run(f"cpufreqctl.auto-cpufreq --epb --set={epb}", shell=True)
+    print(f'Setting to use: "{epb}" EPB')
+
+
 def set_powersave():
     conf = config.get_config()
     gov = conf["battery"]["governor"] if conf.has_option("battery", "governor") else AVAILABLE_GOVERNORS_SORTED[-1]
@@ -503,6 +552,8 @@ def set_powersave():
                 run("cpufreqctl.auto-cpufreq --epp --set=balance_power", shell=True)
                 print('Setting to use: "balance_power" EPP')
 
+    set_energy_perf_bias(conf, "battery")
+    set_platform_profile(conf, "battery")
     set_frequencies()
 
     cpuload, load1m= get_load()
@@ -525,7 +576,9 @@ def set_powersave():
 
         if cpuload >= 20: set_turbo(True) # high cpu usage trigger
         else: # set turbo state based on average of all core temperatures
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {avg_all_core_temp}°C")
+            from auto_cpufreq.modules.system_info import SystemInfo
+
+            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
             set_turbo(False)
 
     footer()
@@ -542,7 +595,9 @@ def mon_powersave():
 
     if cpuload >= 20: print("suggesting to set turbo boost: on") # high cpu usage trigger
     else: # set turbo state based on average of all core temperatures
-        print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {avg_all_core_temp}°C")
+        from auto_cpufreq.modules.system_info import SystemInfo
+
+        print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
         print("suggesting to set turbo boost: off")
     get_turbo()
 
@@ -608,6 +663,9 @@ def set_performance():
                 else:
                     run("cpufreqctl.auto-cpufreq --epp --set=balance_performance", shell=True)
                     print('Setting to use: "balance_performance" EPP')
+    
+    set_energy_perf_bias(conf, "charger")
+    set_platform_profile(conf, "charger")
     set_frequencies()
 
     cpuload, load1m = get_load()
@@ -620,32 +678,37 @@ def set_performance():
         print("Configuration file disables turbo boost")
         set_turbo(False)
     else:
+        from auto_cpufreq.modules.system_info import SystemInfo
+
         if (
             psutil.cpu_percent(percpu=False, interval=0.01) >= 20.0
             or max(psutil.cpu_percent(percpu=True, interval=0.01)) >= 75
         ):
             print("High CPU load", end=""), display_system_load_avg()
+
             if cpuload >= 20: set_turbo(True) # high cpu usage trigger
-            elif avg_all_core_temp >= 70: # set turbo state based on average of all core temperatures
-                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {avg_all_core_temp}°C")
+            elif SystemInfo.avg_temp() >= 70: # set turbo state based on average of all core temperatures
+                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
                 set_turbo(False)
             else: set_turbo(True)
         elif load1m >= performance_load_threshold:
+
             print("High system load", end=""), display_system_load_avg()
             if cpuload >= 20: set_turbo(True) # high cpu usage trigger
-            elif avg_all_core_temp >= 65: # set turbo state based on average of all core temperatures
-                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {avg_all_core_temp}°C")
+            elif SystemInfo.avg_temp() >= 65: # set turbo state based on average of all core temperatures
+                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
                 set_turbo(False)
             else: set_turbo(True)
         else:
             print("Load optimal", end=""), display_system_load_avg()
             if cpuload >= 20: set_turbo(True) # high cpu usage trigger
             else: # set turbo state based on average of all core temperatures
-                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {avg_all_core_temp}°C")
+                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
                 set_turbo(False)
     footer()
 
 def mon_performance():
+    from auto_cpufreq.modules.system_info import SystemInfo
     cpuload, load1m = get_load()
 
     if (
@@ -653,12 +716,14 @@ def mon_performance():
         or max(psutil.cpu_percent(percpu=True, interval=0.01)) >= 75
     ):
         print("High CPU load", end=""), display_system_load_avg()
+        
+
         if cpuload >= 20: # high cpu usage trigger
             print("suggesting to set turbo boost: on")
             get_turbo()
         # set turbo state based on average of all core temperatures
-        elif cpuload <= 25 and avg_all_core_temp >= 70:
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {avg_all_core_temp}°C")
+        elif cpuload <= 25 and SystemInfo.avg_temp() >= 70:
+            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
             print("suggesting to set turbo boost: off")
             get_turbo()
         else:
@@ -669,8 +734,8 @@ def mon_performance():
         if cpuload >= 20: # high cpu usage trigger
             print("suggesting to set turbo boost: on")
             get_turbo()
-        elif cpuload <= 25 and avg_all_core_temp >= 65: # set turbo state based on average of all core temperatures
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {avg_all_core_temp}°C")
+        elif cpuload <= 25 and SystemInfo.avg_temp() >= 65: # set turbo state based on average of all core temperatures
+            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
             print("suggesting to set turbo boost: off")
             get_turbo()
         else:
@@ -681,8 +746,8 @@ def mon_performance():
         if cpuload >= 20: # high cpu usage trigger
             print("suggesting to set turbo boost: on")
             get_turbo()
-        elif cpuload <= 25 and avg_all_core_temp >= 60: # set turbo state based on average of all core temperatures
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {avg_all_core_temp}°C")
+        elif cpuload <= 25 and SystemInfo.avg_temp() >= 60: # set turbo state based on average of all core temperatures
+            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
             print("suggesting to set turbo boost: off")
             get_turbo()
         else:
@@ -825,7 +890,7 @@ def sysinfo():
             for sensor in temp_sensors:
                 # iterate over all temperatures in the current sensor
                 for temp in temp_sensors[sensor]:
-                    if 'CPU' in temp.label and temp.current != 0:
+                    if ('CPU' in temp.label or 'Tctl' in temp.label) and temp.current != 0:
                         temp_per_cpu = [temp.current] * online_cpu_count
                         break
                 else: continue
@@ -842,11 +907,6 @@ def sysinfo():
         print(f"CPU{cpu}    {usage:>5.1f}%       {temp:>3.0f} °C     {freq:>5.0f} MHz")
 
     if offline_cpus: print(f"\nDisabled CPUs: {','.join(offline_cpus)}")
-
-    # get average temperature of all cores
-    avg_cores_temp = sum(temp_per_cpu)
-    global avg_all_core_temp
-    avg_all_core_temp = float(avg_cores_temp / online_cpu_count)
 
     # print current fan speed
     current_fans = list(psutil.sensors_fans())
@@ -885,7 +945,7 @@ def running_daemon_check():
     if is_running("auto-cpufreq", "--daemon"):
         daemon_running_msg()
         exit(1)
-    elif IS_INSTALLED_WITH_SNAP and dcheck == "enabled":
+    elif IS_INSTALLED_WITH_SNAP and SNAP_DAEMON_CHECK == "enabled":
         daemon_running_msg()
         exit(1)
 
@@ -894,6 +954,6 @@ def not_running_daemon_check():
     if not is_running("auto-cpufreq", "--daemon"):
         daemon_not_running_msg()
         exit(1)
-    elif IS_INSTALLED_WITH_SNAP and dcheck == "disabled":
+    elif IS_INSTALLED_WITH_SNAP and SNAP_DAEMON_CHECK == "disabled":
         daemon_not_running_msg()
         exit(1)

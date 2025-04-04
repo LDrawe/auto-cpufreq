@@ -14,13 +14,18 @@ For tl;dr folks:
 
 [![](https://img.youtube.com/vi/QkYRpVEEIlg/0.jpg)](https://www.youtube.com/watch?v=QkYRpVEEIlg)
 
+
+If you're having a problem with auto-cpufreq, before ([submitting an issue](https://github.com/AdnanHodzic/auto-cpufreq/issues)), it is strongly recommended to use the **[auto-cpufreq-genAI-chatbot](https://foolcontrol.org/?p=4903)** to get an immediate answer to your question.
+
+[![](https://img.youtube.com/vi/a-UcwAAXOoc/0.jpg)](https://www.youtube.com/watch?v=a-UcwAAXOoc)
+
 Example of auto-cpufreq GUI (available >= v2.0)
 
-<img src="http://foolcontrol.org/wp-content/uploads/2023/09/auto-cpufreq-v2-gui.png" width="480" alt="Example of auto-cpufreq desktop entry (icon)"/>
+<img src="https://github.com/user-attachments/assets/9c7715c4-16b7-4a5c-86be-4c390276d9e8" width="480" alt="Example of auto-cpufreq desktop entry (icon)" />
 
 Example of `auto-cpufreq --stats` CLI output
 
-<img src="https://foolcontrol.org/wp-content/uploads/2023/09/auto-cpufreq-CLI.png" width="480" alt="Example of auto-cpufreq desktop entry (icon)"/>
+<img src="https://github.com/user-attachments/assets/9c7715c4-16b7-4a5c-86be-4c390276d9e8" width="480" alt="Example of auto-cpufreq desktop entry (icon)"/>
 
 ## Looking for developers and co-maintainers
 
@@ -56,6 +61,7 @@ Example of `auto-cpufreq --stats` CLI output
 - [Battery charging thresholds](#battery-charging-thresholds)
   - [Supported Devices](#supported-devices)
   - [Battery config](#battery-config)
+  - [Ignoring power supplies](#Ignoring-power-supplies)
 - [Troubleshooting](#troubleshooting)
   - [AUR](#aur)
 - [Discussion](#discussion)
@@ -145,7 +151,30 @@ The AUR [Release Package](https://aur.archlinux.org/packages/auto-cpufreq) is cu
 ```
 - The GNOME Power Profiles daemon is [automatically disabled by auto-cpufreq-installer](https://github.com/AdnanHodzic/auto-cpufreq#1-power_helperpy-script-snap-package-install-only) due to it's conflict with auto-cpufreq.service. However, this doesn't happen with AUR installs, which can lead to problems (e.g., [#463](https://github.com/AdnanHodzic/auto-cpufreq/issues/463)) if not masked manually.
   - Open a terminal and run `sudo systemctl mask power-profiles-daemon.service` (then `enable` and `start` the auto-cpufreq.service if you haven't already).
+- The TuneD daemon(enabled by default with Fedora 41) is [automatically disabled by auto-cpufreq-installer](https://github.com/AdnanHodzic/auto-cpufreq#1-power_helperpy-script-snap-package-install-only) due to it's conflict with auto-cpufreq.service.
 
+### Gentoo Linux (GURU Repository)
+
+New versions of auto-cpufreq were recently added to GURU, Gentoo's official community-maintained ebuild repository. The [ebuild](https://github.com/gentoo-mirror/guru/tree/master/sys-power/auto-cpufreq) is maintaned by [S41G0N](https://github.com/S41G0N) and other [GURU contributors](https://bugs.gentoo.org), who can respond in case of issues.
+
+In order to build auto-cpufreq, it is necessary to add & sync GURU repository first. Adding ~amd64 keyword is also needed to unmask the package.
+
+``` 
+# echo "sys-power/auto-cpufreq ~amd64" >> /etc/portage/package.accept_keywords
+# eselect repository enable guru
+# emaint sync -r guru
+# emerge --ask auto-cpufreq
+```
+
+**Notices**
+
+- The build process links to `/usr/share/` instead of `/usr/local/share/`
+- The build works on both systemd/OpenRC systems (both systemd and OpenRC will have a service called auto-cpufreq which can be started automatically)
+- The daemon installer provided does work, but it is RECOMMENDED to install the daemon with:
+``` 
+# systemctl enable --now auto-cpufreq 
+# rc-update add auto-cpufreq default && rc-service auto-cpufreq start
+```
 
 ### NixOS
 
@@ -303,6 +332,22 @@ governor = performance
 # EPP: see available preferences by running: cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_available_preferences
 energy_performance_preference = performance
 
+# EPB (Energy Performance Bias) for the intel_pstate driver
+# see conversion info: https://www.kernel.org/doc/html/latest/admin-guide/pm/intel_epb.html
+# available EPB options include a numeric value between 0-15
+# (where 0 = maximum performance and 15 = maximum power saving),
+# or one of the following strings:
+# performance (0), balance_performance (4), default (6), balance_power (8), or power (15)
+# if the parameter is missing in the config and the hardware supports this setting, the default value will be used
+# the default value is `balance_performance` (for charger)
+# energy_perf_bias = balance_performance
+
+# Platform Profiles
+# https://www.kernel.org/doc/html/latest/userspace-api/sysfs-platform_profile.html
+# See available options by running:
+# cat /sys/firmware/acpi/platform_profile_choices
+# platform_profile = performance
+
 # minimum cpu frequency (in kHz)
 # example: for 800 MHz = 800000 kHz --> scaling_min_freq = 800000
 # see conversion info: https://www.rapidtables.com/convert/frequency/mhz-to-hz.html
@@ -326,6 +371,22 @@ governor = powersave
 
 # EPP: see available preferences by running: cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_available_preferences
 energy_performance_preference = power
+
+# EPB (Energy Performance Bias) for the intel_pstate driver
+# see conversion info: https://www.kernel.org/doc/html/latest/admin-guide/pm/intel_epb.html
+# available EPB options include a numeric value between 0-15
+# (where 0 = maximum performance and 15 = maximum power saving),
+# or one of the following strings:
+# performance (0), balance_performance (4), default (6), balance_power (8), or power (15)
+# if the parameter is missing in the config and the hardware supports this setting, the default value will be used
+# the default value is `balance_power` (for battery)
+# energy_perf_bias = balance_power
+
+# Platform Profiles
+# https://www.kernel.org/doc/html/latest/userspace-api/sysfs-platform_profile.html
+# See available options by running:
+# cat /sys/firmware/acpi/platform_profile_choices
+# platform_profile = low-power
 
 # minimum cpu frequency (in kHz)
 # example: for 800 MHz = 800000 kHz --> scaling_min_freq = 800000
@@ -435,15 +496,15 @@ After the daemon is installed, `auto-cpufreq` is available as a binary and runs 
 
 Starting with >= v2.0 [after installing auto-cpufreq](#installing-auto-cpufreq), an auto-cpufreq desktop entry (icon) is available, i.e.:
 
-<img src="https://foolcontrol.org/wp-content/uploads/2023/09/auto-cpufreq-desktop-entry-icon.png" width="640" alt="Example of auto-cpufreq desktop entry (icon)"/>
+<img src="https://github.com/user-attachments/assets/f426d62b-00b0-4fa5-a72e-b352016ed448" width="640" alt="Example of auto-cpufreq desktop entry (icon)"/>
 
 After selecting it to open the GUI, the auto-cpufreq daemon can be installed by clicking the "Install" button:
 
-<img src="http://foolcontrol.org/wp-content/uploads/2023/09/auto-cpufreq-daemon-install-gui.png" width="480" alt="The auto-cpufreq GUI's 'Install' button"/>
+<img src="https://github.com/user-attachments/assets/5af47e5e-8b9e-4ff6-9ffc-e78acb623ce4" width="480" alt="The auto-cpufreq GUI's 'Install' button"/>
 
 After that, the full auto-cpufreq GUI is available:
 
-<img src="http://foolcontrol.org/wp-content/uploads/2023/09/auto-cpufreq-v2-gui.png" width="640" alt="The full auto-cpufreq GUI"/>
+<img src="https://github.com/user-attachments/assets/9c7715c4-16b7-4a5c-86be-4c390276d9e8" width="640" alt="The full auto-cpufreq GUI"/>
 
 *Please note:* after the daemon is installed (by any method), its stats and options are accessible via both CLI and GUI.
 
@@ -485,7 +546,9 @@ If the daemon has been installed, live stats of CPU/system load monitoring and o
 
 ## Battery charging thresholds
 
-As of [v2.2.0](https://github.com/AdnanHodzic/auto-cpufreq/releases/tag/v2.2.0), battery charging thresholds can be set in the config file. This enforces your battery to start and stop charging at defined values
+***Please note:** [Original implementor](https://github.com/AdnanHodzic/auto-cpufreq/pull/637) is looking for user input & testing to further improve this functionality. If you would like to help in this process, please refer to [Looking for developers and co-maintainers](https://github.com/AdnanHodzic/auto-cpufreq/#looking-for-developers-and-co-maintainers)*.
+
+As of [v2.2.0](https://github.com/AdnanHodzic/auto-cpufreq/releases/tag/v2.2.0), battery charging thresholds can be set in the config file. This enforces your battery to start and stop charging at defined values.
 
 ### Supported devices
 
@@ -512,6 +575,26 @@ stop_threshold = 80
 this works only with `lenovo_laptop` kernel module compatable laptops.  
 
 add `ideapad_laptop_conservation_mode = true` to your `auto-cpufreq.conf` file
+
+### Ignoring power supplies
+
+you may have a controler or headphones and when ever they may be on battery they might cause auto-cpufreq
+to limit preformence to ignore them add to you config file the name of the power supply, under `[power_supply_ignore_list]`
+
+the name of the power supply can be found with  `ls /sys/class/power_supply/`
+
+```
+[power_supply_ignore_list]
+
+name1 = this
+name2 = is 
+name3 = an
+name4 = example
+
+# like this
+xboxctrl = {the xbox controler power supply name}
+
+```
 
 ## Troubleshooting
 

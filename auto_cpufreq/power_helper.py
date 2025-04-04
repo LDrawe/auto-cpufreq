@@ -25,6 +25,7 @@ bluetoothctl_exists = does_command_exists("bluetoothctl")
 powerprofilesctl_exists = does_command_exists("powerprofilesctl")
 systemctl_exists = does_command_exists("systemctl")
 tlp_stat_exists = does_command_exists("tlp-stat")
+tuned_stat_exists = does_command_exists("tuned")
 
 # detect if gnome power profile service is running
 if not IS_INSTALLED_WITH_SNAP:
@@ -58,8 +59,12 @@ def gnome_power_detect():
     if systemctl_exists and not bool(gnome_power_status):
         warning()
         print("Detected running GNOME Power Profiles daemon service!")
-        print("This daemon might interfere with auto-cpufreq and should be disabled.")
-        print("\nSteps to perform this action using auto-cpufreq: power_helper script:")
+        print("\nThis daemon might interfere with auto-cpufreq and will be automatically")
+        print("disabled when auto-cpufreq daemon is installed and")
+        print("it will be re-enabled after auto-cpufreq is removed.")
+        
+        print("\nOnly necessary to be manually done on Snap package installs!")
+        print("Steps to perform this action using auto-cpufreq: power_helper script:")
         print(f"git clone {GITHUB}.git")
         print("cd auto-cpufreq/auto_cpufreq")
         print("python3 power_helper.py --gnome_power_disable")
@@ -70,9 +75,9 @@ def gnome_power_detect_install():
     if systemctl_exists and not bool(gnome_power_status):
         warning()
         print("Detected running GNOME Power Profiles daemon service!")
-        print("This daemon might interfere with auto-cpufreq and has been disabled.\n")
+        print("\nThis daemon might interfere with auto-cpufreq and has been disabled.\n")
         print('This daemon is not automatically disabled in "monitor" mode and')
-        print("will be enabled after auto-cpufreq is removed.\n")
+        print("will be enabled after auto-cpufreq daemon is removed.")
 
 
 # notification on snap
@@ -82,7 +87,7 @@ def gnome_power_detect_snap():
     print(f"auto-cpufreq-installer: {GITHUB}#auto-cpufreq-installer")
     print()
     print("Unable to detect state of GNOME Power Profiles daemon service!")
-    print("This daemon might interfere with auto-cpufreq and should be disabled.")
+    print("This daemon might interfere with auto-cpufreq and should be disabled!")
     print("\nSteps to perform this action using auto-cpufreq: power_helper script:")
     print(f"git clone {GITHUB}.git")
     print("cd auto-cpufreq/auto_cpufreq")
@@ -95,9 +100,18 @@ def gnome_power_stop_live():
         call(["powerprofilesctl", "set", "balanced"])
         call(["systemctl", "stop", "power-profiles-daemon"])
 
+# stops tuned (live)
+def tuned_stop_live():
+    if systemctl_exists and tuned_stat_exists:
+        call(["systemctl", "stop", "tuned"])
+
 # starts gnome >= 40 power profiles (live)
 def gnome_power_start_live():
     if systemctl_exists: call(["systemctl", "start", "power-profiles-daemon"])
+
+def tuned_start_live():
+    if systemctl_exists and tuned_stat_exists: 
+        call(["systemctl", "start", "tuned"])
 
 # enable gnome >= 40 power profiles (uninstall)
 def gnome_power_svc_enable():
@@ -105,11 +119,20 @@ def gnome_power_svc_enable():
         try:
             print("* Enabling GNOME power profiles\n")
             call(["systemctl", "unmask", "power-profiles-daemon"])
-            call(["systemctl", "start", "power-profiles-daemon"])
-            call(["systemctl", "enable", "power-profiles-daemon"])
-            call(["systemctl", "daemon-reload"])
+            call(["systemctl", "enable", "--now", "power-profiles-daemon"])
         except:
             print("\nUnable to enable GNOME power profiles")
+            print("If this causes any problems, please submit an issue:")
+            print(GITHUB+"/issues")
+
+def tuned_svc_enable():
+    if systemctl_exists and tuned_stat_exists:
+        try:
+            print("* Enabling TuneD\n")
+            call(["systemctl", "unmask", "tuned"])
+            call(["systemctl", "enable", "--now", "tuned"])
+        except:
+            print("\nUnable to enable TuneD daemon")
             print("If this causes any problems, please submit an issue:")
             print(GITHUB+"/issues")
 
@@ -128,7 +151,7 @@ def gnome_power_svc_status():
 def bluetooth_disable():
     if IS_INSTALLED_WITH_SNAP: bluetooth_notif_snap()
     elif bluetoothctl_exists:
-        print("* Turn off bluetooth on boot")
+        print("* Turn off bluetooth on boot (can be turned on any time later on!)")
         btconf = Path("/etc/bluetooth/main.conf")
         try:
             orig_set = "AutoEnable=true"
@@ -175,7 +198,7 @@ def gnome_power_rm_reminder():
     if systemctl_exists and bool(gnome_power_status):
         warning()
         print("Detected GNOME Power Profiles daemon service is stopped!")
-        print("This service will now be enabled and started again.")
+        print("This service will now be enabled and started again.\n")
 
 
 def gnome_power_rm_reminder_snap():
@@ -196,12 +219,21 @@ def disable_power_profiles_daemon():
     # always disable power-profiles-daemon
     try:
         print("\n* Disabling GNOME power profiles")
-        call(["systemctl", "stop", "power-profiles-daemon"])
-        call(["systemctl", "disable", "power-profiles-daemon"])
+        call(["systemctl", "disable", "--now", "power-profiles-daemon"])
         call(["systemctl", "mask", "power-profiles-daemon"])
-        call(["systemctl", "daemon-reload"])
     except:
         print("\nUnable to disable GNOME power profiles")
+        print("If this causes any problems, please submit an issue:")
+        print(GITHUB+"/issues")
+
+def disable_tuned_daemon():
+    # always disable TuneD daemon
+    try:
+        print("\n* Disabling TuneD daemon")
+        call(["systemctl", "disable", "--now", "tuned"])
+        call(["systemctl", "mask", "tuned"])
+    except:
+        print("\nUnable to disable TuneD daemon")
         print("If this causes any problems, please submit an issue:")
         print(GITHUB+"/issues")
 
@@ -240,6 +272,10 @@ def gnome_power_svc_disable():
                 call(["powerprofilesctl", "set", "balanced"])
 
                 disable_power_profiles_daemon()
+
+def tuned_svc_disable():
+    if systemctl_exists and tuned_stat_exists:
+        disable_tuned_daemon()
 
 # cli
 @click.command()

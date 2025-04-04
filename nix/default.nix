@@ -7,15 +7,6 @@
 }:
 let
 
-  psutil = python3Packages.psutil.overrideAttrs (oldAttrs: {
-    src = fetchFromGitHub {
-      owner = "giampaolo";
-      repo = "psutil";
-      rev = "4cf56e08c1bc883ec89758834b50954380759858";
-      sha256 = "61JwXP/cZrXqdBnb2J0kdDJoKpltO62KcpM0sYX6g1A=";
-    };
-  });
-
   pyinotify = python3Packages.pyinotify.overrideAttrs (oldAttrs: {
     src = fetchFromGitHub {
       owner = "shadeyg56";
@@ -23,14 +14,7 @@ let
       rev = "923cebec3a2a84c7e38c9e68171eb93f5d07ce5d";
       hash = "sha256-714CximEK4YhIqDmvqJYOUGs39gvDkWGrkNrXwxT8iM=";
     };
-  });
-
-  requests = python3Packages.requests.overrideAttrs (oldAttrs: {
-    src = fetchPypi {
-      pname = "requests";
-      version = "2.32.1";
-      hash = "sha256-65fofmTHnmTluKx1zundH5f0niibCD7mvpYmiTByVoU=";
-    };
+    patches = [];
   });
 
 in
@@ -39,14 +23,14 @@ python3Packages.buildPythonPackage {
   format = "pyproject";
 
   pname = "auto-cpufreq";
-  version = "2.3.0";
+  version = "2.5.0";
   src = ../.;
 
   nativeBuildInputs = with pkgs; [wrapGAppsHook gobject-introspection];
 
   buildInputs = with pkgs; [gtk3 python3Packages.poetry-core];
 
-  propagatedBuildInputs = with python3Packages; [requests pygobject3 click distro psutil setuptools poetry-dynamic-versioning pyinotify pkgs.getent];
+  propagatedBuildInputs = with python3Packages; [requests pygobject3 click distro psutil setuptools poetry-dynamic-versioning pyinotify urwid pyasyncore pkgs.getent];  
 
   doCheck = false;
   pythonImportsCheck = ["auto_cpufreq"];
@@ -68,7 +52,7 @@ python3Packages.buildPythonPackage {
     # copy script manually
     cp scripts/cpufreqctl.sh $out/bin/cpufreqctl.auto-cpufreq
 
-    # move the css to the rihgt place
+    # move the css to the right place
     mkdir -p $out/share/auto-cpufreq/scripts
     cp scripts/style.css $out/share/auto-cpufreq/scripts/style.css
 
